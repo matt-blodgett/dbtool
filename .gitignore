@@ -1,0 +1,12 @@
+# Qt Creator files
+dbtool/*.user
+
+# Builds and executables
+build*
+
+# 3rd Party libraries
+dbtool/bin
+dbtool/lib
+
+# Tests and notes
+dbtool/tests
