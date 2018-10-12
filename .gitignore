@@ -4,9 +4,7 @@ dbtool/*.user
 # Builds and executables
 build*
 
-# 3rd Party libraries
+# Subdirs
 dbtool/bin
 dbtool/lib
-
-# Tests and notes
 dbtool/tests

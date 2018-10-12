@@ -1,14 +1,14 @@
+DEFINES += DBTOOL_LIB
+
 TEMPLATE = lib
 TARGET = dbtool
 
-CONFIG += c++1x
-CONFIG -= app_bundle
 CONFIG -= qt
-
-DEFINES += DBTOOL_LIB
+CONFIG -= app_bundle
+CONFIG += c++1x
 
 LIBS += $$PWD/lib/libuser32.a
 LIBS += $$PWD/lib/libodbc32.a
 
-HEADERS += dbtool.h
-SOURCES += dbtool.cpp
+HEADERS += db/dbtool.h
+SOURCES += db/dbtool.cpp
