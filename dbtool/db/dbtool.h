@@ -16,8 +16,6 @@
 #include <string>
 #include <vector>
 
-#include "dberrors.h"
-
 
 
 struct DBPrivilege
@@ -72,7 +70,7 @@ struct DBProcedure
 
 struct DBField
 {
-    int index;
+    SQLUSMALLINT index;
     std::string value;
     SQLSMALLINT datatype;
 };
@@ -80,7 +78,7 @@ struct DBField
 
 struct DBRecord
 {
-    int index;
+    SQLUSMALLINT index;
     std::vector<DBField> fields;
 };
 
@@ -131,15 +129,6 @@ struct DBConnString
 };
 
 
-struct DBCatalog
-{
-    std::string catalog;
-    std::string schema;
-    std::string label;
-    std::string column;
-};
-
-
 typedef std::vector<DBDriver> DBDriverList;
 typedef std::vector<DBSource> DBSourceList;
 typedef std::vector<DBProcedure> DBProcedureList;
@@ -159,15 +148,11 @@ public:
     explicit DBConnection();
     ~DBConnection();
 
-
-    void test();
-
-    void csv_out(std::string fpath);
-
 public:
     static std::string to_string(SQLCHAR *uchar);
     static SQLCHAR* to_uchar(std::string *str);
-    static std::string sql_from_file(std::string fpath);
+    static std::string sql_from_file(const std::string &fpath);
+    static void csv_write(const std::string &fpath, const DBRecordSet &rows);
 
 public:
     DBDriverList get_drivers();
@@ -181,40 +166,45 @@ public:
 
 public:
     void initialize();
-    void connect(DBConnString cns);
+    void connect(const DBConnString &cns);
     void disconnect();
+    void close();
 
-    void prepare(std::string qry);
-    void execute(std::string qry);
+    void prepare(const std::string &qry);
+    void execute(const std::string &qry);
     void execute();
 
-    void bind_param(SQLUSMALLINT index, DBParam param);
+    void build_columns();
+    DBColumnSet columns() const;
+    DBRecord headers() const;
+
+    void bind(const SQLUSMALLINT &index, DBParam param);
 
     DBRecordSet fetch_all();
-    DBRecordSet fetch_many(SQLINTEGER limit);
+    DBRecordSet fetch_many(const SQLINTEGER &limit);
     DBRecord fetch_one();
+    DBRecord fetch();
 
     void end();
 
 public:
-    bool initialized() const;
+    bool opened() const;
     bool connected() const;
 
     SQLINTEGER rowcount() const;
     SQLSMALLINT colcount() const;
 
-private:
-    DBRecord fetch();
-
-    static DBException error_class(std::string sqlstate);
-    bool rc_error(RETCODE rc, SQLSMALLINT htype);
+    SQLHANDLE handle(const SQLSMALLINT &ht) const;
 
 private:
-    bool m_initialized;
+    bool rc_error(const RETCODE &rc, const SQLSMALLINT &ht);
+
+    bool m_opened;
     bool m_connected;
     DBConnString m_dbcns;
+    DBColumnSet m_columns;
+    SQLUSMALLINT m_row;
 
-private:
     SQLHENV m_henv;
     SQLHDBC m_hdbc;
     SQLHSTMT m_hstmt;
@@ -222,3 +212,14 @@ private:
 
 
 #endif
+
+
+
+
+
+
+
+
+
+
+

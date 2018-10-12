@@ -1,16 +1,12 @@
 #include "dbtool.h"
+#include "dberrors.h"
 
-#include <iostream>
 #include <fstream>
 #include <limits.h>
 
-#include "dberrors.h"
 
-
-#define DBC_LEN_STR 128 + 1
-#define DBC_LEN_REM 254 + 1
-
-
+#define DBC_LEN_STR 128
+#define DBC_LEN_REM 256
 
 
 void DBConnString::add_arg(std::string key, std::string val){
@@ -22,45 +18,16 @@ void DBConnString::set_cns(std::string cns){
 }
 
 
-
-
-
-void DBConnection::csv_out(std::string fpath){
-    std::ofstream ofs;
-    ofs.open(fpath.c_str());
-
-//    for(size_t cidx = 0; cidx < m_columns.size(); cidx++){
-//        ofs << m_columns.at(cidx).name << ",";
-//    }
-
-//    ofs << std::endl;
-
-    DBRecordSet rows = fetch_all();
-    for(size_t ridx = 0; ridx < rows.size(); ridx++){
-
-        DBRecord row = rows.at(ridx);
-        for(size_t i = 0; i < row.fields.size(); i++){
-            ofs << row.fields.at(i).value << ",";
-        }
-
-        ofs << std::endl;
-    }
-
-    ofs.close();
-}
-
-
-
-
 DBConnection::DBConnection(){
     m_henv = nullptr;
     m_hdbc = nullptr;
     m_hstmt = nullptr;
-    m_initialized = false;
+    m_opened = false;
     m_connected = false;
 }
 DBConnection::~DBConnection(){
     disconnect();
+    close();
 }
 
 std::string DBConnection::to_string(SQLCHAR *uch){
@@ -69,7 +36,7 @@ std::string DBConnection::to_string(SQLCHAR *uch){
 SQLCHAR* DBConnection::to_uchar(std::string *str){
     return reinterpret_cast<SQLCHAR*>(const_cast<CHAR *>(str->c_str()));
 }
-std::string DBConnection::sql_from_file(std::string fpath){
+std::string DBConnection::sql_from_file(const std::string &fpath){
     std::ifstream ifs;
     ifs.open(fpath.c_str());
 
@@ -83,6 +50,24 @@ std::string DBConnection::sql_from_file(std::string fpath){
     ifs.close();
 
     return sql;
+}
+void DBConnection::csv_write(const std::string &fpath, const DBRecordSet &rows){
+    std::ofstream ofs;
+    ofs.open(fpath.c_str());
+
+    DBRecordSet::const_iterator iter_row;
+    for(iter_row = rows.begin(); iter_row != rows.end(); iter_row++){
+
+        DBFieldSet values = iter_row->fields;
+        DBFieldSet::iterator iter_fields;
+        for(iter_fields = values.begin(); iter_fields != values.end(); iter_fields++){
+            ofs << iter_fields->value << ",";
+        }
+
+        ofs << "\n";
+    }
+
+    ofs.close();
 }
 
 DBDriverList DBConnection::get_drivers(){
@@ -134,7 +119,6 @@ DBTableSet DBConnection::get_tables(std::string catalog, std::string schema, std
     // schema = SQL_ALL_SCHEMAS, catalog = "", name = ""
     // tabletype = SQL_ALL_TABLE_TYPES, catalog = "", schema = "", name = ""
     // tabletype = "" or CSV ( 'TABLE', 'VIEW' or TABLE, VIEW)
-
     DBTableSet ret_tables;
 
     SQLCHAR *uch_searchCatalog = catalog.empty() ? nullptr : to_uchar(&catalog);
@@ -147,7 +131,8 @@ DBTableSet DBConnection::get_tables(std::string catalog, std::string schema, std
     SQLSMALLINT len_searchTable = table.empty() ? 0 : SQL_NTS;
     SQLSMALLINT len_searchType = types.empty() ? 0 : SQL_NTS;
 
-    RETCODE rc = SQLTablesA(m_hstmt,
+    RETCODE rc;
+    rc = SQLTablesA(m_hstmt,
         uch_searchCatalog, len_searchCatalog,
         uch_searchSchema, len_searchSchema,
         uch_searchTable, len_searchTable,
@@ -327,7 +312,8 @@ DBProcedureList DBConnection::get_procedures(std::string catalog, std::string sc
     SQLSMALLINT len_searchSchema = schema.empty() ? 0 : SQL_NTS;
     SQLSMALLINT len_searchProc = proc.empty() ? 0 : SQL_NTS;
 
-    RETCODE rc = SQLProceduresA(m_hstmt,
+    RETCODE rc;
+    rc = SQLProceduresA(m_hstmt,
         uch_searchCatalog, len_searchCatalog,
         uch_searchSchema, len_searchSchema,
         uch_searchProc, len_searchProc);
@@ -472,7 +458,7 @@ DBPrivilegeList DBConnection::get_table_privileges(std::string catalog, std::str
 
 void DBConnection::initialize(){
 
-    if(!m_initialized){
+    if(!m_opened){
 
         RETCODE rc;
 
@@ -498,10 +484,10 @@ void DBConnection::initialize(){
         rc = SQLSetConnectAttr(m_hdbc, SQL_ATTR_TRACE, trace_opt, 0);
         if(rc_error(rc, SQL_HANDLE_DBC)){return;}
 
-        m_initialized = true;
+        m_opened = true;
     }
 }
-void DBConnection::connect(DBConnString dbcns){
+void DBConnection::connect(const DBConnString &dbcns){
 
     if(!m_connected){
 
@@ -543,62 +529,117 @@ void DBConnection::connect(DBConnString dbcns){
 }
 void DBConnection::disconnect(){
 
-    if(m_connected){
+    RETCODE rc;
+    rc = SQLDisconnect(m_hdbc);
+    if(rc_error(rc, SQL_HANDLE_DBC)){return;}
 
-        RETCODE rc;
+    m_connected = false;
+}
+void DBConnection::close(){
+    RETCODE rc;
 
-        if(m_hstmt){
-            rc = SQLFreeHandle(SQL_HANDLE_STMT, m_hstmt);
-            if(rc_error(rc, SQL_HANDLE_STMT)){return;}
+    if(m_hstmt){
+        rc = SQLFreeHandle(SQL_HANDLE_STMT, m_hstmt);
+        if(rc_error(rc, SQL_HANDLE_STMT)){return;}
 
-             m_hstmt = nullptr;
-        }
-
-        if(m_hdbc){
-            rc = SQLDisconnect(m_hdbc);
-            if(rc_error(rc, SQL_HANDLE_DBC)){return;}
-
-            rc = SQLFreeHandle(SQL_HANDLE_DBC, m_hdbc);
-            if(rc_error(rc, SQL_HANDLE_DBC)){return;}
-
-            m_hdbc = nullptr;
-        }
-
-        if(m_henv){
-            rc = SQLFreeHandle(SQL_HANDLE_ENV, m_henv);
-            if(rc_error(rc, SQL_HANDLE_ENV)){return;}
-
-            m_henv = nullptr;
-        }
-
-        m_initialized = false;
-        m_connected = false;
+         m_hstmt = nullptr;
     }
+
+    if(m_hdbc){
+
+        rc = SQLFreeHandle(SQL_HANDLE_DBC, m_hdbc);
+        if(rc_error(rc, SQL_HANDLE_DBC)){return;}
+
+        m_hdbc = nullptr;
+    }
+
+    if(m_henv){
+        rc = SQLFreeHandle(SQL_HANDLE_ENV, m_henv);
+        if(rc_error(rc, SQL_HANDLE_ENV)){return;}
+
+        m_henv = nullptr;
+    }
+
+    m_opened = false;
 }
 
-void DBConnection::prepare(std::string qry){
+void DBConnection::prepare(const std::string &qry){
 
     SQLCHAR *uch_qry = DBConnection::to_uchar(&qry);
     SQLINTEGER len_qry = static_cast<SQLINTEGER>(qry.size());
 
-    RETCODE rc = SQLPrepareA(m_hstmt, uch_qry, len_qry);
+    RETCODE rc;
+    rc = SQLPrepareA(m_hstmt, uch_qry, len_qry);
     if(rc_error(rc, SQL_HANDLE_STMT)){return;}
 }
-void DBConnection::execute(std::string qry){
+void DBConnection::execute(const std::string &qry){
 
     SQLCHAR *uch_qry = DBConnection::to_uchar(&qry);
-    RETCODE rc = SQLExecDirectA(m_hstmt, uch_qry, SQL_NTS);
+
+    RETCODE rc;
+    rc = SQLExecDirectA(m_hstmt, uch_qry, SQL_NTS);
     if(rc_error(rc, SQL_HANDLE_STMT)){return;}
 }
 void DBConnection::execute(){
 
-    RETCODE rc = SQLExecute(m_hstmt);
+    RETCODE rc;
+    rc = SQLExecute(m_hstmt);
     if(rc_error(rc, SQL_HANDLE_STMT)){return;}
 }
 
-void DBConnection::bind_param(SQLUSMALLINT index, DBParam param){
+void DBConnection::build_columns(){
 
-    RETCODE rc = SQLBindParameter(
+    m_columns.clear();
+
+    for(SQLUSMALLINT cidx = 1; cidx < colcount() + 1; cidx++){
+
+        SQLCHAR uch_columnName[DBC_LEN_STR];
+        SQLSMALLINT len_columnName;
+        SQLSMALLINT val_dataTypeSQL;
+        SQLULEN val_columnSize;
+        SQLSMALLINT val_decimalDigits;
+        SQLSMALLINT val_nullable;
+
+        RETCODE rc;
+        rc = SQLDescribeColA(
+            m_hstmt, cidx,
+            uch_columnName,
+            DBC_LEN_STR,
+            &len_columnName,
+            &val_dataTypeSQL,
+            &val_columnSize,
+            &val_decimalDigits,
+            &val_nullable);
+
+        DBColumn dbcol;
+        dbcol.index = cidx;
+        dbcol.name = to_string(uch_columnName);
+        dbcol.size = static_cast<SQLINTEGER>(val_columnSize);
+        dbcol.decimalDigits = val_decimalDigits;
+        dbcol.nullableCVal = val_nullable;
+        dbcol.datatypeSQL = val_dataTypeSQL;
+        m_columns.push_back(dbcol);
+    }
+}
+DBColumnSet DBConnection::columns() const{
+    return m_columns;
+}
+DBRecord DBConnection::headers() const{
+
+    DBRecord row;
+    for(SQLUSMALLINT cidx = 1; cidx < colcount() + 1; cidx++){
+        DBField header;
+        header.index = cidx;
+        header.value = m_columns[cidx].name;
+    }
+
+    return row;
+}
+
+void DBConnection::bind(const SQLUSMALLINT &index, DBParam param){
+
+    RETCODE rc;
+    rc = SQLBindParameter(
         m_hstmt, index,
         param.iotype,
         param.valtype,
@@ -614,7 +655,7 @@ void DBConnection::bind_param(SQLUSMALLINT index, DBParam param){
 DBRecordSet DBConnection::fetch_all(){
     return fetch_many(-1);
 }
-DBRecordSet DBConnection::fetch_many(SQLINTEGER limit){
+DBRecordSet DBConnection::fetch_many(const SQLINTEGER &limit){
 
     DBRecordSet rows;
 
@@ -622,7 +663,7 @@ DBRecordSet DBConnection::fetch_many(SQLINTEGER limit){
     for(SQLINTEGER i = 0; i < count; i++){
         DBRecord row = fetch();
 
-        if(row.index < 0){
+        if(row.fields.size() < 1){
             break;
         }
 
@@ -637,35 +678,44 @@ DBRecord DBConnection::fetch_one(){
 DBRecord DBConnection::fetch(){
 
     DBRecord row;
-    row.index = -1;
-
     if(SQLFetch(m_hstmt) == SQL_NO_DATA){return row;}
 
-    row.index = 1;
-    for(SQLUSMALLINT col = 1; col < colcount() + 1; col++){
+    for(SQLUSMALLINT cidx = 1; cidx < colcount() + 1; cidx++){
         SQLCHAR uch_data[DBC_LEN_STR];
         SQLINTEGER len_data;
 
-        SQLGetData(m_hstmt, col, SQL_C_CHAR, uch_data, sizeof(uch_data), &len_data);
+        RETCODE rc;
+        rc = SQLGetData(
+            m_hstmt, cidx,
+            SQL_C_DEFAULT,
+            uch_data,
+            sizeof(uch_data),
+            &len_data);
+        rc_error(rc, SQL_HANDLE_STMT);
 
         DBField field;
-        field.index = col;
-        field.datatype = SQL_C_CHAR;
+        field.index = cidx;
+        field.datatype = SQL_CHAR;
         field.value = std::string(uch_data, uch_data + (sizeof(uch_data) / sizeof uch_data[0])).c_str();
 
         row.fields.push_back(field);
     }
 
+    row.index = ++m_row;
     return row;
 }
 
 void DBConnection::end(){
-    RETCODE rc = SQLCloseCursor(m_hstmt);
+    m_columns.empty();
+    m_row = 0;
+
+    RETCODE rc;
+    rc = SQLCloseCursor(m_hstmt);
     if(rc_error(rc, SQL_HANDLE_STMT)){return;}
 }
 
-bool DBConnection::initialized() const{
-    return m_initialized;
+bool DBConnection::opened() const{
+    return m_opened;
 }
 bool DBConnection::connected() const{
     return m_connected;
@@ -682,27 +732,23 @@ SQLSMALLINT DBConnection::colcount() const{
     return col_count;
 }
 
-DBException DBConnection::error_class(std::string sqlstate){
+SQLHANDLE DBConnection::handle(const SQLSMALLINT &ht) const {
+    SQLHANDLE hnd = nullptr;
 
-    std::string cls_code = sqlstate.substr(0, 2);
-
-    if(cls_code == "22"){
-        return DataError();
+    if(ht == SQL_HANDLE_STMT){
+        hnd = m_hstmt;
     }
-    else if(cls_code == "23"){
-        return IntegrityError();
+    else if(ht == SQL_HANDLE_ENV){
+        hnd = m_henv;
     }
-    else if(cls_code == "24" || cls_code == "25" || cls_code == "26"){
-        return InvalidStateError();
-    }
-    else if(cls_code == "42"){
-        return SyntaxError();
+    else if(ht == SQL_HANDLE_DBC){
+        hnd = m_hdbc;
     }
 
-    return DatabaseError();
+    return hnd;
 }
 
-bool DBConnection::rc_error(RETCODE rc, SQLSMALLINT ht){
+bool DBConnection::rc_error(const RETCODE &rc, const SQLSMALLINT &ht){
 
     bool error = !(rc == SQL_SUCCESS || rc == SQL_SUCCESS_WITH_INFO || rc == SQL_NO_DATA);
 
@@ -739,13 +785,23 @@ bool DBConnection::rc_error(RETCODE rc, SQLSMALLINT ht){
         std::string sqlstate = std::string(err_state, err_state + (sizeof(err_state) / sizeof(err_state[0]))).c_str();
         std::string sqlmessage = std::string(err_msg, err_msg + (sizeof(err_msg) / sizeof(err_msg[0]))).c_str();
 
-        DBException dberr = error_class(sqlstate);
-        dberr.errnum = err_num;
-        dberr.sqlstate = sqlstate;
-        dberr.sqlmessage = sqlmessage;
+        DBException dberr = DBException::from_state(sqlstate);
+        dberr.set(err_num, sqlstate, sqlmessage);
         throw dberr;
     }
 
     return error;
 }
+
+
+
+
+
+
+
+
+
+
+
+
 

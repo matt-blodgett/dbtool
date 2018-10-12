@@ -1,13 +1,15 @@
 #include "db/dbtool.h"
+#include "db/dberrors.h"
+
 #include <iostream>
 
 
 int main() {
 
-    std::string sqlpath = "C:/dev/dbtool/dbtool/tests/testsql.txt";
-    std::string csvpath = "C:/Users/mablodgett/Desktop/test.csv";
+//    std::string sqlpath = "C:/dev/dbtool/dbtool/tests/testsql.txt";
+//    std::string csvpath = "C:/Users/mablodgett/Desktop/test.csv";
 
-    std::string qry = DBConnection::sql_from_file(sqlpath);
+//    std::string qry = DBConnection::sql_from_file(sqlpath);
 
     std::string drv = "iSeries Access ODBC Driver";
     std::string sys = "10.3.0.3";
@@ -37,13 +39,24 @@ int main() {
         dbc->disconnect();
 
     } catch (DBException &dberr) {
-        std::cout << dberr.what() << std::endl;
-
         std::cerr << dberr.msg() << std::endl;
     }
 
     return 0;
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
